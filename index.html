@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Runner</title>
+
+<style>
+html,body{
+  margin:0;
+  height:100%;
+  background:#111;
+  overflow:hidden;
+  touch-action:none;
+  font-family:Arial,Helvetica,sans-serif
+}
+
+canvas{
+  display:block;
+  width:100%;
+  height:100%
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="c"></canvas>
+
+<script>
+
+/* ============================================================
+   RASMLAR
+   game.html bilan bir papkaga joylang:
+
+   game.html
+   rasm1.jpg  ← SIZNING YUZINGIZ
+   rasm2.jpg  ← to'siq/poyezd uchun rasm
+   ============================================================ */
+
+const PLAYER_IMG = "IMG_20261005_184324_489.jpg";
+const ENEMY_IMG  = "rasm2.jpg";
+
+
+/* ---------- Rasmlarni yuklash ---------- */
+
+function loadImg(src){
+  const o = {
+    img:new Image(),
+    ok:false
+  };
+
+  o.img.onload = ()=>{
+    o.ok=true;
+  };
+
+  o.img.onerror = ()=>{
+    o.ok=false;
+  };
+
+  o.img.src = src;
+
+  return o;
+}
+
+const imgP = loadImg(PLAYER_IMG);
+const imgE = loadImg(ENEMY_IMG);
+
+
+/* ---------- Canvas ---------- */
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+let W=0,H=0,DPR=1;
+
+function resize(){
+
+  DPR = Math.min(window.devicePixelRatio||1,2);
+
+  W = cv.clientWidth;
+  H = cv.clientHeight;
+
+  cv.width = W*DPR;
+  cv.height = H*DPR;
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+
+window.addEventListener('resize',resize);
+resize();
+
+
+/* ---------- O'yin holati ---------- */
+
+let state='menu';
+
+let dist=0;
+let speed=3.5;
+let coins=0;
+let score=0;
+
+let best=0;
+
+try{
+  best=+localStorage.getItem('runner_best')||0;
+}catch(e){}
+
+const P={
+  lane:0,
+  x:0,
+  jy:0,
+  vy:0,
+  onGround:true,
+  run:0
+};
+
+let objs=[];
+let spawnGap=0;
+let shake=0;
+
+
+/* ---------- Reset ---------- */
+
+function reset(){
+
+  dist=0;
+  speed=3.5;
+  coins=0;
+  score=0;
+
+  objs=[];
+  spawnGap=3;
+
+  P.lane=0;
+  P.x=0;
+  P.jy=0;
+  P.vy=0;
+  P.onGround=true;
+
+  shake=0;
+}
+
+
+/* ---------- Boshqaruv ---------- */
+
+function left(){
+
+  if(state==='play'){
+    P.lane=Math.max(-1,P.lane-1);
+  }
+}
+
+function right(){
+
+  if(state==='play'){
+    P.lane=Math.min(1,P.lane+1);
+  }
+}
+
+function jump(){
+
+  if(state==='play' && P.onGround){
+
+    P.vy=8;
+    P.onGround=false;
+  }
+}
+
+function startOrRestart(){
+
+  if(state!=='play'){
+
+    reset();
+
+    state='play';
+  }
+}
+
+
+/* ---------- Klaviatura ---------- */
+
+window.addEventListener('keydown',e=>{
+
+  const k=e.key.toLowerCase();
+
+  if(k==='arrowleft'||k==='a'){
+    left();
+  }
+
+  else if(k==='arrowright'||k==='d'){
+    right();
+  }
+
+  else if(k==='arrowup'||k==='w'||k===' '){
+
+    e.preventDefault();
+
+    state==='play'
+      ? jump()
+      : startOrRestart();
+  }
+
+  else if(k==='enter'){
+
+    startOrRestart();
+  }
+
+});
+
+
+/* ---------- Telefon boshqaruvi ---------- */
+
+let tx=0;
+let ty=0;
+let tt=0;
+
+cv.addEventListener('pointerdown',e=>{
+
+  tx=e.clientX;
+  ty=e.clientY;
+
+  tt=Date.now();
+});
+
+
+cv.addEventListener('pointerup',e=>{
+
+  const dx=e.clientX-tx;
+  const dy=e.clientY-ty;
+
+  if(state!=='play'){
+
+    startOrRestart();
+
+    return;
+  }
+
+  if(
+    Math.abs(dx)>30 &&
+    Math.abs(dx)>Math.abs(dy)
+  ){
+
+    dx<0 ? left() : right();
+  }
+
+  else if(dy<-30){
+
+    jump();
+  }
+
+  else if(
+    Math.abs(dx)<15 &&
+    Math.abs(dy)<15
+  ){
+
+    jump();
+  }
+
+});
+
+
+/* ---------- Tasodifiy son ---------- */
+
+function rnd(a,b){
+
+  return a+Math.random()*(b-a);
+}
+
+
+/* ---------- To'siqlar ---------- */
+
+function spawnRow(){
+
+  const z=18;
+
+  const r=Math.random();
+
+  const lanes=[-1,0,1];
+
+
+  if(r<0.35){
+
+    const free=
+      lanes[Math.floor(Math.random()*3)];
+
+    lanes.forEach(l=>{
+
+      if(
+        l!==free &&
+        Math.random()<0.75
+      ){
+
+        objs.push({
+          t:'train',
+          lane:l,
+          z:z
+        });
+
+      }
+
+    });
+
+
+    for(let i=0;i<4;i++){
+
+      objs.push({
+        t:'coin',
+        lane:free,
+        z:z+i*0.5,
+        h:0.3
+      });
+
+    }
+
+  }
+
+  else if(r<0.7){
+
+    const l=
+      lanes[Math.floor(Math.random()*3)];
+
+    objs.push({
+      t:'barrier',
+      lane:l,
+      z:z
+    });
+
+
+    for(let i=-1;i<=1;i++){
+
+      objs.push({
+        t:'coin',
+        lane:l,
+        z:z+i*0.45,
+        h:1.1
+      });
+
+    }
+
+
+    if(Math.random()<0.5){
+
+      const l2=
+        lanes[Math.floor(Math.random()*3)];
+
+      if(l2!==l){
+
+        objs.push({
+          t:'barrier',
+          lane:l2,
+          z:z
+        });
+
+      }
+
+    }
+
+  }
+
+  else{
+
+    const l=
+      lanes[Math.floor(Math.random()*3)];
+
+    for(let i=0;i<6;i++){
+
+      objs.push({
+        t:'coin',
+        lane:l,
+        z:z+i*0.5,
+        h:0.3
+      });
+
+    }
+
+  }
+}
+
+
+/* ---------- Yangilash ---------- */
+
+function update(dt){
+
+  if(state!=='play') return;
+
+
+  speed=Math.min(
+    9,
+    3.5+dist*0.012
+  );
+
+  dist+=speed*dt;
+
+  score=Math.floor(dist*10);
+
+  P.run+=dt*speed*3;
+
+
+  /* Yo'l almashtirish */
+
+  P.x+=
+    (P.lane-P.x)*
+    Math.min(1,dt*14);
+
+
+  /* Sakrash */
+
+  if(!P.onGround){
+
+    P.vy-=24*dt;
+
+    P.jy+=P.vy*dt;
+
+    if(P.jy<=0){
+
+      P.jy=0;
+      P.vy=0;
+      P.onGround=true;
+    }
+  }
+
+
+  /* Yangi obyekt */
+
+  spawnGap-=speed*dt;
+
+  if(spawnGap<=0){
+
+    spawnRow();
+
+    spawnGap=rnd(3.2,5);
+  }
+
+
+  /* Collision */
+
+  for(const o of objs){
+
+    o.z-=speed*dt;
+
+    if(o.dead) continue;
+
+
+    if(
+      o.z>0.8 &&
+      o.z<1.2 &&
+      Math.abs(P.x-o.lane)<0.55
+    ){
+
+      if(o.t==='coin'){
+
+        if(Math.abs(P.jy-o.h)<0.9){
+
+          o.dead=true;
+
+          coins++;
+        }
+
+      }
+
+      else if(o.t==='barrier'){
+
+        if(P.jy<0.55){
+
+          gameOver();
+        }
+
+      }
+
+      else if(o.t==='train'){
+
+        gameOver();
+      }
+
+    }
+
+  }
+
+
+  objs=objs.filter(
+    o=>o.z>0.15 && !o.dead
+  );
+
+
+  if(shake>0){
+
+    shake=Math.max(
+      0,
+      shake-dt*20
+    );
+  }
+}
+
+
+/* ---------- Game Over ---------- */
+
+function gameOver(){
+
+  if(state!=='play') return;
+
+  state='over';
+
+  shake=10;
+
+  if(score>best){
+
+    best=score;
+
+    try{
+
+      localStorage.setItem(
+        'runner_best',
+        best
+      );
+
+    }catch(e){}
+  }
+}
+
+
+/* ============================================================
+   YUZ RASMINI DOIRA ICHIGA CHIZISH
+   ============================================================ */
+
+function faceImg(o,cx,cy,r,fallback){
+
+  ctx.save();
+
+  ctx.beginPath();
+
+  ctx.arc(
+    cx,
+    cy,
+    r,
+    0,
+    Math.PI*2
+  );
+
+  ctx.closePath();
+
+
+  if(o.ok){
+
+    ctx.clip();
+
+
+    const iw=o.img.naturalWidth;
+    const ih=o.img.naturalHeight;
+
+    const s=Math.min(iw,ih);
+
+
+    /*
+      Yuz rasmi kvadrat qilib kesiladi.
+      Rasmning markaziy qismi olinadi.
+    */
+
+    ctx.drawImage(
+      o.img,
+
+      (iw-s)/2,
+      (ih-s)*0.15,
+
+      s,
+      s,
+
+      cx-r,
+      cy-r,
+      r*2,
+      r*2
+    );
+
+
+    ctx.restore();
+
+
+    /* Yuz atrofiga oq chegara */
+
+    ctx.beginPath();
+
+    ctx.arc(
+      cx,
+      cy,
+      r,
+      0,
+      Math.PI*2
+    );
+
+    ctx.lineWidth=
+      Math.max(1,r*0.12);
+
+    ctx.strokeStyle='#fff';
+
+    ctx.stroke();
+
+  }
+
+  else{
+
+    /* Rasm topilmasa oddiy yuz */
+
+    ctx.fillStyle=fallback;
+
+    ctx.fill();
+
+    ctx.restore();
+
+
+    ctx.fillStyle='#000';
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+      cx-r*0.35,
+      cy-r*0.15,
+      r*0.12,
+      0,
+      7
+    );
+
+    ctx.arc(
+      cx+r*0.35,
+      cy-r*0.15,
+      r*0.12,
+      0,
+      7
+    );
+
+    ctx.fill();
+
+
+    ctx.beginPath();
+
+    ctx.arc(
+      cx,
+      cy+r*0.15,
+      r*0.4,
+      0.2,
+      Math.PI-0.2
+    );
+
+    ctx.lineWidth=r*0.1;
+
+    ctx.strokeStyle='#000';
+
+    ctx.stroke();
+  }
+}
+
+
+/* ---------- Yumaloq to'rtburchak ---------- */
+
+function rr(x,y,w,h,r){
+
+  ctx.beginPath();
+
+  ctx.moveTo(x+r,y);
+
+  ctx.arcTo(
+    x+w,y,
+    x+w,y+h,
+    r
+  );
+
+  ctx.arcTo(
+    x+w,y+h,
+    x,y+h,
+    r
+  );
+
+  ctx.arcTo(
+    x,y+h,
+    x,y,
+    r
+  );
+
+  ctx.arcTo(
+    x,y,
+    x+w,y,
+    r
+  );
+
+  ctx.closePath();
+}
+
+
+/* ---------- Chizish ---------- */
+
+function draw(){
+
+  const hz=H*0.34;
+
+  const bot=H*0.9;
+
+  const laneW=
+    Math.min(
+      W*0.26,
+      H*0.42
+    );
+
+
+  const sy=s=>
+    hz+(bot-hz)*s;
+
+
+  const sx=(l,s)=>
+    W/2+l*laneW*s;
+
+
+  ctx.save();
+
+
+  if(shake>0){
+
+    ctx.translate(
+      rnd(-shake,shake),
+      rnd(-shake,shake)
+    );
+  }
+
+
+  /* Osmon */
+
+  let g=
+    ctx.createLinearGradient(
+      0,0,
+      0,hz
+    );
+
+  g.addColorStop(
+    0,
+    '#2b6cd6'
+  );
+
+  g.addColorStop(
+    1,
+    '#9fd3ff'
+  );
+
+  ctx.fillStyle=g;
+
+  ctx.fillRect(
+    0,
+    0,
+    W,
+    hz+1
+  );
+
+
+  /* Binolar */
+
+  ctx.fillStyle='#6a86a8';
+
+  for(let i=0;i<14;i++){
+
+    const bx=
+      i*W/12-20;
+
+    const bh=
+      30+((i*37)%50);
+
+    ctx.fillRect(
+      bx,
+      hz-bh,
+      W/14,
+      bh
+    );
+  }
+
+
+  /* Yer */
+
+  ctx.fillStyle='#3b8a3b';
+
+  ctx.fillRect(
+    0,
+    hz,
+    W,
+    H-hz
+  );
+
+
+  /* Yo'l */
+
+  const s2=
+    (H-hz)/(bot-hz);
+
+  const off=
+    dist%1;
+
+  const fl=
+    Math.floor(dist);
+
+
+  for(let k=0;k<26;k++){
+
+    let zn=k-off;
+
+    let zf=k+1-off;
+
+
+    if(zf<0.25) continue;
+
+
+    zn=Math.max(zn,0.25);
+
+
+    const sn=1/zn;
+    const sf=1/zf;
+
+
+    const yn=
+      Math.min(
+        sy(sn),
+        H+5
+      );
+
+    const yf=
+      sy(sf);
+
+
+    const hn=
+      laneW*1.6*sn;
+
+    const hf=
+      laneW*1.6*sf;
+
+
+    ctx.fillStyle=
+      ((k+fl)%2)
+      ? '#555a63'
+      : '#4a4f58';
+
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      W/2-hn,
+      yn
+    );
+
+    ctx.lineTo(
+      W/2+hn,
+      yn
+    );
+
+    ctx.lineTo(
+      W/2+hf,
+      yf
+    );
+
+    ctx.lineTo(
+      W/2-hf,
+      yf
+    );
+
+    ctx.closePath();
+
+    ctx.fill();
+
+
+    /* Yon chiziqlar */
+
+    if((k+fl)%4===0){
+
+      ctx.fillStyle='#2e2e2e';
+
+      const pw=
+        Math.max(
+          2,
+          6*sf
+        );
+
+      const ph=
+        60*sf;
+
+
+      ctx.fillRect(
+        W/2-
+        laneW*2.1*sf-
+        pw/2,
+
+        yf-ph,
+
+        pw,
+        ph
+      );
+
+
+      ctx.fillRect(
+        W/2+
+        laneW*2.1*sf-
+        pw/2,
+
+        yf-ph,
+
+        pw,
+        ph
+      );
+    }
+  }
+
+
+  /* Yo'l chiziqlari */
+
+  ctx.strokeStyle=
+    'rgba(255,255,255,.55)';
+
+  ctx.lineWidth=2;
+
+
+  [-0.5,0.5].forEach(l=>{
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      W/2,
+      hz
+    );
+
+    ctx.lineTo(
+      W/2+
+      l*laneW*s2,
+      H
+    );
+
+    ctx.stroke();
+  });
+
+
+  ctx.strokeStyle='#e7c04a';
+
+  ctx.lineWidth=3;
+
+
+  [-1.6,1.6].forEach(l=>{
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      W/2,
+      hz
+    );
+
+    ctx.lineTo(
+      W/2+
+      l*laneW*s2,
+      H
+    );
+
+    ctx.stroke();
+  });
+
+
+  /* Obyektlarni uzoqdan yaqinga */
+
+  const list=
+    [...objs].sort(
+      (a,b)=>b.z-a.z
+    );
+
+
+  let playerDrawn=false;
+
+
+  for(const o of list){
+
+    if(
+      !playerDrawn &&
+      o.z<1
+    ){
+
+      drawPlayer(
+        hz,
+        bot,
+        laneW
+      );
+
+      playerDrawn=true;
+    }
+
+
+    drawObj(
+      o,
+      sx,
+      sy,
+      laneW
+    );
+  }
+
+
+  if(!playerDrawn){
+
+    drawPlayer(
+      hz,
+      bot,
+      laneW
+    );
+  }
+
+
+  ctx.restore();
+
+
+  /* ---------- HUD ---------- */
+
+  ctx.fillStyle=
+    'rgba(0,0,0,.45)';
+
+  rr(
+    10,
+    10,
+    170,
+    64,
+    12
+  );
+
+  ctx.fill();
+
+
+  ctx.fillStyle='#fff';
+
+  ctx.font=
+    'bold 20px Arial';
+
+  ctx.textAlign='left';
+
+  ctx.fillText(
+    'Ball: '+score,
+    22,
+    36
+  );
+
+
+  ctx.fillStyle='#ffd23f';
+
+  ctx.fillText(
+    '● '+coins,
+    22,
+    62
+  );
+
+
+  ctx.fillStyle=
+    'rgba(0,0,0,.45)';
+
+  rr(
+    W-150,
+    10,
+    140,
+    36,
+    12
+  );
+
+  ctx.fill();
+
+
+  ctx.fillStyle='#fff';
+
+  ctx.font='16px Arial';
+
+  ctx.textAlign='right';
+
+  ctx.fillText(
+    'Rekord: '+best,
+    W-22,
+    34
+  );
+
+
+  /* ---------- Menu / Game Over ---------- */
+
+  if(state!=='play'){
+
+    ctx.fillStyle=
+      'rgba(0,0,0,.6)';
+
+    ctx.fillRect(
+      0,
+      0,
+      W,
+      H
+    );
+
+
+    ctx.textAlign='center';
+
+    ctx.fillStyle='#fff';
+
+    ctx.font=
+      'bold '+
+      Math.min(48,W*0.09)+
+      'px Arial';
+
+
+    ctx.fillText(
+      state==='menu'
+      ? "YUGURISH O'YINI"
+      : "O'YIN TUGADI",
+
+      W/2,
+      H*0.36
+    );
+
+
+    ctx.font='22px Arial';
+
+
+    if(state==='over'){
+
+      ctx.fillText(
+        'Ball: '+score+
+        '   Tanga: '+coins,
+
+        W/2,
+        H*0.45
+      );
+    }
+
+
+    ctx.fillStyle='#ffd23f';
+
+    ctx.font=
+      'bold 24px Arial';
+
+
+    ctx.fillText(
+      'Boshlash: ekranga bosing / Space',
+
+      W/2,
+      H*0.56
+    );
+
+
+    ctx.fillStyle='#ddd';
+
+    ctx.font='16px Arial';
+
+
+    ctx.fillText(
+      "← → yo'l almashtirish  |  ↑ / Space sakrash",
+
+      W/2,
+      H*0.63
+    );
+
+
+    ctx.fillText(
+      "Telefonda: chapga/o'ngga/yuqoriga suring",
+
+      W/2,
+      H*0.68
+    );
+  }
+}
+
+
+/* ---------- Obyekt chizish ---------- */
+
+function drawObj(
+  o,
+  sx,
+  sy,
+  laneW
+){
+
+  const s=1/o.z;
+
+  const cx=
+    sx(o.lane,s);
+
+  const gy=
+    sy(s);
+
+  const w=
+    laneW*0.85*s;
+
+
+  /* ---------- Poyezd ---------- */
+
+  if(o.t==='train'){
+
+    const h=
+      H*0.3*s;
+
+
+    ctx.fillStyle=
+      'rgba(0,0,0,.3)';
+
+    ctx.fillRect(
+      cx-w/2,
+      gy-3*s,
+      w,
+      6*s
+    );
+
+
+    ctx.fillStyle='#c0392b';
+
+    rr(
+      cx-w/2,
+      gy-h,
+      w,
+      h,
+      8*s
+    );
+
+    ctx.fill();
+
+
+    ctx.fillStyle='#8e2a20';
+
+    ctx.fillRect(
+      cx-w/2,
+      gy-h,
+      w,
+      h*0.12
+    );
+
+
+    ctx.fillStyle='#f4d03f';
+
+    ctx.fillRect(
+      cx-w/2,
+      gy-h*0.25,
+      w,
+      h*0.06
+    );
+
+
+    ctx.fillStyle='#9ad3f5';
+
+    ctx.fillRect(
+      cx-w*0.42,
+      gy-h*0.88,
+      w*0.2,
+      h*0.15
+    );
+
+
+    ctx.fillRect(
+      cx+w*0.22,
+      gy-h*0.88,
+      w*0.2,
+      h*0.15
+    );
+
+
+    faceImg(
+      imgE,
+      cx,
+      gy-h*0.55,
+      w*0.3,
+      '#e0a070'
+    );
+  }
+
+
+  /* ---------- To'siq ---------- */
+
+  else if(o.t==='barrier'){
+
+    const h=
+      H*0.075*s;
+
+
+    ctx.fillStyle=
+      'rgba(0,0,0,.3)';
+
+    ctx.fillRect(
+      cx-w/2,
+      gy-2*s,
+      w,
+      5*s
+    );
+
+
+    const n=6;
+
+    const sw=w/n;
+
+
+    for(let i=0;i<n;i++){
+
+      ctx.fillStyle=
+        i%2
+        ? '#fff'
+        : '#e74c3c';
+
+
+      ctx.fillRect(
+        cx-w/2+i*sw,
+        gy-h,
+        sw,
+        h
+      );
+    }
+
+
+    ctx.strokeStyle='#222';
+
+    ctx.lineWidth=
+      Math.max(1,2*s);
+
+    ctx.strokeRect(
+      cx-w/2,
+      gy-h,
+      w,
+      h
+    );
+  }
+
+
+  /* ---------- Tanga ---------- */
+
+  else{
+
+    const r=
+      H*0.022*s;
+
+
+    const cy=
+      gy-
+      o.h*H*0.18*s-
+      r;
+
+
+    const sq=
+      Math.abs(
+        Math.cos(
+          dist*3+o.z
+        )
+      );
+
+
+    ctx.fillStyle='#ffcf2e';
+
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+      cx,
+      cy,
+      Math.max(
+        1,
+        r*(0.3+0.7*sq)
+      ),
+      r,
+      0,
+      0,
+      7
+    );
+
+    ctx.fill();
+
+
+    ctx.strokeStyle='#c99500';
+
+    ctx.lineWidth=
+      Math.max(1,2*s);
+
+    ctx.stroke();
+  }
+}
+
+
+/* ============================================================
+   O'YINCHI
+   YUZ RASMI SHU YERDA KO'RINADI
+   ============================================================ */
+
+function drawPlayer(
+  hz,
+  bot,
+  laneW
+){
+
+  const u=
+    H*0.18;
+
+
+  const cx=
+    W/2+
+    P.x*laneW;
+
+
+  const foot=
+    bot-
+    P.jy*u;
+
+
+  /* Soya */
+
+  ctx.fillStyle=
+    'rgba(0,0,0,.35)';
+
+  ctx.beginPath();
+
+  ctx.ellipse(
+    cx,
+    bot+2,
+    u*0.3/
+      (1+P.jy*0.6),
+    u*0.07,
+    0,
+    0,
+    7
+  );
+
+  ctx.fill();
+
+
+  /* Yugurish animatsiyasi */
+
+  const ph=
+    Math.sin(P.run)*
+    (P.onGround?1:0.2);
+
+
+  /* Oyoqlar */
+
+  ctx.strokeStyle='#1f3a93';
+
+  ctx.lineCap='round';
+
+  ctx.lineWidth=
+    u*0.13;
+
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    cx-u*0.1,
+    foot-u*0.38
+  );
+
+  ctx.lineTo(
+    cx-u*0.1+
+    ph*u*0.2,
+    foot
+  );
+
+  ctx.stroke();
+
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    cx+u*0.1,
+    foot-u*0.38
+  );
+
+  ctx.lineTo(
+    cx+u*0.1-
+    ph*u*0.2,
+    foot
+  );
+
+  ctx.stroke();
+
+
+  /* Tana */
+
+  ctx.fillStyle='#27ae60';
+
+  rr(
+    cx-u*0.22,
+    foot-u*0.95,
+    u*0.44,
+    u*0.6,
+    u*0.1
+  );
+
+  ctx.fill();
+
+
+  /* Qo'llar */
+
+  ctx.strokeStyle='#f0c8a0';
+
+  ctx.lineWidth=
+    u*0.1;
+
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    cx-u*0.22,
+    foot-u*0.85
+  );
+
+  ctx.lineTo(
+    cx-u*0.3-
+    ph*u*0.12,
+    foot-u*0.5
+  );
+
+  ctx.stroke();
+
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    cx+u*0.22,
+    foot-u*0.85
+  );
+
+  ctx.lineTo(
+    cx+u*0.3+
+    ph*u*0.12,
+    foot-u*0.5
+  );
+
+  ctx.stroke();
+
+
+  /* ========================================================
+     SIZNING YUZINGIZ
+     ======================================================== */
+
+  faceImg(
+    imgP,
+    cx,
+    foot-u*1.2,
+    u*0.3,
+    '#f0c8a0'
+  );
+}
+
+
+/* ---------- Asosiy sikl ---------- */
+
+let last=
+  performance.now();
+
+
+function loop(t){
+
+  const dt=
+    Math.min(
+      0.05,
+      (t-last)/1000
+    );
+
+  last=t;
+
+
+  update(dt);
+
+  draw();
+
+
+  requestAnimationFrame(loop);
+}
+
+
+requestAnimationFrame(loop);
+
+</script>
+
+</body>
+</html>
